@@ -5,42 +5,71 @@ import re
 from bs4 import BeautifulSoup
 import thread
 import time
+import socket
 
 class SpiderModel:
     def __init__(self):
         self.page = 1
 
         #load frawered url dict
-        self.fcrawerlist = open("./craweredlist.txt",'r');
+        self.fcrawerlist = open("./craweredlist.txt",'r')
         if not self.fcrawerlist:
             print "no fraweredlist.txt\n will exit..."
             exit(-1)
+        self.fcrawerlistTmp = open("./tmp",'w')
         self.crawleredDict = {}
         for line in self.fcrawerlist.readlines():
-            curline = line.split();
-            self.crawleredDict [curline] = 1;
+            curline = line.split()
+            self.crawleredDict [curline] = 1
 
-        self.contentTargetFile = open("./contentFile.txt",'w+');
+        self.contentTargetFile = open("./contentFile.txt",'w+')
 
-        self.testMaxNum = 10;
+        self.testMaxNum = 1000;
         self.curCnt = 0;
         self.fhPrefix = "http://wap.fh21.com.cn"
 
-    def GetPageRecur(self,url):
-        if self.crawleredDict.has_key(url):
-            print url+" has crawered skip it..."
-            return
-        if self.curCnt > self.testMaxNum:
-            return
+        socket.setdefaulttimeout(10);
 
+
+    def tryRequest(self, url):
         userAgent = 'Mozilla/4.0 (compatible; MSIE 5.5; Windows NT)'
         header =  {'User-Agent' : userAgent,
                    'refer': url}
         req = urllib2.Request(url, headers = header)
+        try:
         #try:
-        myResponse = urllib2.urlopen(req)
-        myPage = myResponse.read()
+            myResponse = urllib2.urlopen(req)
+            myPage = myResponse.read()
+            myResponse.close()
+            return myPage;
+        except urllib2.HTTPError,err:
+            time.sleep(2)
+            print "some HTTP thing error try again:"
+            myPage = self.tryRequest(url)
+            return myPage
+        except urllib2.URLError,err:
+            time.sleep(2)
+            print "some URL thing error try again:"
+            myPage = self.tryRequest(url)
+            return myPage
+        except socket.timeout as e:
+            return "timeout"
+        except:
+            info = sys.exc_info()
+            print info[0], ":", info[1]
+            time.sleep(30)
+            return "some thing error"
+    def GetPageRecur(self,url):
+        if self.crawleredDict.has_key(url):
+            print url+" has crawered skip it..."
+            return
+        if self.curCnt > 10 and self.curCnt % 100 == 0:
+            time.sleep(180)
+        if self.curCnt > self.testMaxNum:
+            return
+
             #unicodePage = myPage.decode("utf-8")
+        myPage = self.tryRequest(url);
         soup = BeautifulSoup(myPage, 'html.parser')
 
         title = self.getFh21Title(soup)
@@ -51,30 +80,30 @@ class SpiderModel:
             content = self.mergeMutiPageContent(url, totalPagenNum)
         else:
             content = self.extractFh21Content(myPage,soup)
+        content += "\n"
 
-        self.contentTargetFile.write(title)
+        self.contentTargetFile.write(url + "\t" + title)
         self.contentTargetFile.write(content)
+        self.crawleredDict [url] = 1
+        url += "\n"
+        self.fcrawerlistTmp.write(url)
+        self.curCnt += 1
 
             #self.extractFh21Content(soup)
-        print url + " del finish is the " + str(self.curCnt) + "ed page"
-        self.crawleredDict [url] = 1
-        self.curCnt += 1
+        print url + " del finish is the " + str(self.curCnt) + " ed page"
         #recursive
         curPageUrls = self.getFh21Urls(soup, url)
        # print curPageUrls
-            #for url in curPageUrls:
-            #    self.GetPageRecur(url)
+        for url in curPageUrls:
+            print str(self.curCnt) + ":will crawl " + url
+            self.GetPageRecur(url)
         #except Exception,e:
         #    print Exception,":",e
 
-
-
     def GetPageNumContent(self,url):
-        userAgent = 'Mozilla/4.0 (compatible; MSIE 5.5; Windows NT)'
-        header =  {'User-Agent' : userAgent}
-        req = urllib2.Request(url, headers = header)
-        myResponse = urllib2.urlopen(req)
-        myPage = myResponse.read()
+        myPage = self.tryRequest(url)
+        myPage = myPage.replace("   </p>", "")
+        #print myPage
         #unicodePage = myPage.decode("utf-8")
         #print myPage
         soup = BeautifulSoup(myPage, 'html.parser')
@@ -91,19 +120,25 @@ class SpiderModel:
             else:
                 curUrl = halfUrl + '_' + str(i+1) + ".html";
             print "will crawl " + curUrl
-            totalContent += (self.GetPageNumContent(curUrl) + "--")
+            totalContent += ("***page_"+ str(i) + "***" + self.GetPageNumContent(curUrl))
             #time.sleep(5)
         return totalContent
 
     def getFh21TotalNum(self, soup):
-        totalPageNum = int(soup.find_all("span",class_="total")[0].string)
-        return totalPageNum
+        tStr = soup.find_all("span",class_="total")
+        if tStr:
+            totalPageNum = int(tStr[0].string)
+            return totalPageNum
+        else:
+            return 0
 
     def getFh21Urls(self, soup, curUrl):
         allAtags = soup.find_all(href=re.compile('view'))
         urls = []
         for a in allAtags:
-            if a['href'].find("fh21") > 1:
+            if a['href'].find("_") >= 1:
+                continue
+            if a['href'].find("fh21") >= 1:
                 urls.append(a['href'])
             else:
                 urls.append(self.fhPrefix + a['href'])
@@ -141,7 +176,7 @@ class SpiderModel:
                         curPageContent += curP.get_text()+"++"
 
                 #print ulTag.get_text();
-        print curPageContent
+        #print curPageContent
         return curPageContent
            # print contentTag[0]
         #for content in contents:
